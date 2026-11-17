@@ -134,10 +134,6 @@ const CLOUD_VERSION_CONFLICT_REASON =
   'Save & test after Load Subscriptions fails with a version conflict on the Cloud instance until it runs a ' +
   'release with https://github.com/grafana/grafana-azure-monitor-datasource/pull/137';
 
-const RESOURCE_PICKER_RESET_REASON =
-  'The resource picker drops typed Advanced values until ' +
-  'https://github.com/grafana/grafana-azure-monitor-datasource/pull/174 merges';
-
 interface VariableOptions {
   subscription?: string;
   resourceGroup?: string;
@@ -325,7 +321,6 @@ test.describe('Azure Monitor datasource', () => {
     selectors,
   }) => {
     test.fail(isCloudRun, CLOUD_VERSION_CONFLICT_REASON);
-    test.fail(true, RESOURCE_PICKER_RESET_REASON);
     test.setTimeout(120_000);
     await createLiveDataSourceInConfigEditor(createDataSourceConfigPage, page, selectors);
     const dashboardPage = await gotoDashboardPage({ timeRange: { from: 'now-6h', to: 'now' } });
