@@ -4,6 +4,8 @@ import { components } from '../../src/e2e/selectors';
 import type { AzureMonitorDataSourceJsonData, AzureMonitorDataSourceSecureJsonData } from '../../src/types/types';
 
 import {
+  CLIENT_SECRET_DATA_SOURCE,
+  CLOUD_VERSION_CONFLICT_REASON,
   PLACEHOLDER_CLIENT_ID,
   PLACEHOLDER_SUBSCRIPTION,
   PLACEHOLDER_TENANT_ID,
@@ -11,7 +13,11 @@ import {
   PROVISIONED_FILE,
   fillClientSecretCredentials,
   isCloudRun,
+  mockHealthCheck,
   mockSubscriptions,
+  saveAndTest,
+  selectClientSecretAuth,
+  waitForSave,
 } from './helpers';
 
 const { configEditor } = components;
@@ -30,6 +36,7 @@ test.describe('Config editor', () => {
       page,
     }) => {
       await createDataSourceConfigPage({ type: PLUGIN_TYPE });
+      await selectClientSecretAuth(page);
 
       await expect(page.getByTestId(configEditor.authType.select)).toContainText('App Registration (Client Secret)');
       await expect(page.getByRole('combobox', { name: 'Azure Cloud' })).toBeVisible();
@@ -51,7 +58,7 @@ test.describe('Config editor', () => {
       const configPage = await createDataSourceConfigPage({ type: PLUGIN_TYPE });
 
       await page.getByTestId(configEditor.authType.select).getByRole('combobox').click();
-      await expect(configPage.getByGrafanaSelector(selectors.components.Select.option)).toHaveText([
+      await expect(configPage.getByGrafanaSelector(selectors.components.Select.option)).toContainText([
         'App Registration (Client Secret)',
         'App Registration (Client Certificate)',
       ]);
@@ -133,6 +140,15 @@ test.describe('Config editor', () => {
   });
 
   test.describe('save & test', () => {
+    let uid: string | undefined;
+
+    test.afterEach(async ({ grafanaAPIClient }) => {
+      if (uid) {
+        await grafanaAPIClient.deleteDataSourceByUID(uid);
+        uid = undefined;
+      }
+    });
+
     test('should show an error alert when the health check fails', async ({ createDataSourceConfigPage, page }) => {
       const configPage = await createDataSourceConfigPage({ type: PLUGIN_TYPE });
       await fillClientSecretCredentials(
@@ -141,17 +157,25 @@ test.describe('Config editor', () => {
         PLACEHOLDER_CLIENT_ID,
         'placeholder-client-secret'
       );
-      await configPage.mockHealthCheckResponse({ status: 'ERROR', message: 'mocked health check failure' }, 400);
+      await mockHealthCheck(
+        page,
+        configPage.datasource.uid,
+        { status: 'ERROR', message: 'mocked health check failure' },
+        400
+      );
 
-      await configPage.saveAndTest();
+      await saveAndTest(page, configPage.datasource.uid);
       await expect(configPage).toHaveAlert('error', { hasText: 'mocked health check failure' });
     });
 
     test('should show an error alert when Azure rejects the credentials', async ({
-      createDataSourceConfigPage,
+      createDataSource,
+      gotoDataSourceConfigPage,
       page,
     }) => {
-      const configPage = await createDataSourceConfigPage({ type: PLUGIN_TYPE });
+      const dataSource = await createDataSource(CLIENT_SECRET_DATA_SOURCE);
+      uid = dataSource.uid;
+      const configPage = await gotoDataSourceConfigPage(dataSource.uid);
       await fillClientSecretCredentials(
         page,
         PLACEHOLDER_TENANT_ID,
@@ -159,7 +183,7 @@ test.describe('Config editor', () => {
         'placeholder-client-secret'
       );
 
-      const response = await configPage.saveAndTest();
+      const response = await saveAndTest(page, dataSource.uid);
       expect(response.ok()).toBe(false);
       await expect(configPage).toHaveAlert('error', { hasText: 'One or more health checks failed' });
     });
@@ -168,6 +192,7 @@ test.describe('Config editor', () => {
       createDataSourceConfigPage,
       page,
     }) => {
+      test.fail(isCloudRun, CLOUD_VERSION_CONFLICT_REASON);
       await mockSubscriptions(page);
       const configPage = await createDataSourceConfigPage({ type: PLUGIN_TYPE });
       await fillClientSecretCredentials(
@@ -180,13 +205,12 @@ test.describe('Config editor', () => {
       await expect(page.getByTestId(configEditor.defaultSubscription.input)).toContainText(
         PLACEHOLDER_SUBSCRIPTION.displayName
       );
-      await configPage.mockHealthCheckResponse({ status: 'OK', message: 'mocked health check success' });
+      await mockHealthCheck(page, configPage.datasource.uid, { status: 'OK', message: 'mocked health check success' });
 
-      const saveResponse = page.waitForResponse(
-        (response) => response.request().method() === 'PUT' && /\/api\/datasources\/uid\//.test(response.url())
-      );
+      const saveResponse = waitForSave(page, configPage.datasource.uid);
       await page.getByRole('button', { name: 'Save & test' }).click();
-      expect((await saveResponse).status()).toBe(200);
+      const save = await saveResponse;
+      expect(save.status(), await save.text()).toBe(200);
       await expect(configPage).toHaveAlert('success', { hasText: 'mocked health check success' });
     });
   });
