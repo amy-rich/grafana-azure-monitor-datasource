@@ -19,6 +19,7 @@ import {
   type AzureMonitorDataSourceJsonData,
 } from '../types/types';
 import { fetchAllArmPages, MAX_ARM_PAGES, routeNames } from '../utils/common';
+import messageFromError from '../utils/messageFromError';
 
 interface HealthModelResource {
   id: string;
@@ -67,6 +68,11 @@ const ENTITY_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]{1,258}[a-zA-Z0-9]$/;
 
 const jsonFrame = (name: string, refId: string, values: unknown[]): DataFrame =>
   toDataFrame({ name, refId, fields: [{ name: 'data', type: FieldType.other, values }] });
+
+const toHealthModelsQueryError = (error: unknown) => {
+  const queryError = toDataQueryError(error instanceof Error ? error.message : error);
+  return { ...queryError, message: messageFromError(queryError) || 'Health Models request failed' };
+};
 
 export default class AzureHealthModelsDatasource extends DataSourceWithBackend<
   AzureMonitorQuery,
@@ -213,9 +219,7 @@ export default class AzureHealthModelsDatasource extends DataSourceWithBackend<
                 signal.throwIfAborted();
                 return {
                   entityName: name,
-                  error:
-                    toDataQueryError(error instanceof Error ? error.message : error).message ||
-                    'Health Models entity read failed',
+                  error: toHealthModelsQueryError(error).message,
                 };
               }
             })
@@ -255,7 +259,7 @@ export default class AzureHealthModelsDatasource extends DataSourceWithBackend<
     } catch (error) {
       return {
         data: [],
-        errors: [{ ...toDataQueryError(error instanceof Error ? error.message : error), refId: query.refId }],
+        errors: [{ ...toHealthModelsQueryError(error), refId: query.refId }],
       };
     }
   }

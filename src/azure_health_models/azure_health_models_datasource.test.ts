@@ -332,6 +332,32 @@ describe('AzureHealthModelsDatasource', () => {
       }
     );
 
+    it.each(['ARM', 'data plane'])('returns nested %s errors as readable text', async (plane) => {
+      const { datasource, getResource } = setup();
+      const error = {
+        status: 400,
+        statusText: 'Bad Request',
+        data: { error: { code: 'NoRegisteredProviderFound', message: 'The requested API version is unavailable' } },
+      };
+      if (plane === 'ARM') {
+        getResource.mockRejectedValueOnce(error);
+      } else {
+        datasource.getEntityHealth = jest.fn().mockRejectedValue(error);
+      }
+      const result = await firstValueFrom(datasource.query(request()));
+      expect(result.state).toBe(LoadingState.Error);
+      expect(result.errors?.[0]).toMatchObject({
+        refId: 'A',
+        message: expect.stringContaining('The requested API version is unavailable'),
+      });
+      if (plane === 'ARM') {
+        expect(result.errors?.[0].status).toBe(400);
+        expect(result.data).toEqual([]);
+      } else {
+        expect((result.data[3] as DataFrame).fields[0].values[0].error).toBe('The requested API version is unavailable');
+      }
+    });
+
     it.each(['partial', 'all', 'empty'])('keeps explicit entity errors for %s failures', async (mode) => {
       const { datasource } = setup(mode === 'empty' ? [] : [entity('healthy-entity'), entity('failed-entity')]);
       datasource.getEntityHealth = jest.fn(async (_, name) => {
