@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/grafana/grafana-azure-monitor-datasource/pkg/azuremonitor/healthmodels"
 	"github.com/grafana/grafana-azure-monitor-datasource/pkg/azuremonitor/types"
 	"github.com/grafana/grafana-azure-sdk-go/v2/azcredentials"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -696,6 +697,7 @@ func TestNewQueryMux_UnhandledQueryTypeErrorSource(t *testing.T) {
 		{name: "empty query type is a downstream error", queryType: "", expectedSrc: backend.ErrorSourceDownstream},
 		{name: "unknown query type is a plugin error", queryType: "Unknown", expectedSrc: backend.ErrorSourcePlugin},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ds := &DataSource{executors: map[string]azDatasourceExecutor{}}
@@ -708,4 +710,20 @@ func TestNewQueryMux_UnhandledQueryTypeErrorSource(t *testing.T) {
 			require.Equal(t, tt.expectedSrc, res.Responses["A"].ErrorSource)
 		})
 	}
+}
+
+func TestHealthModelsQueriesReportServerSideExecutionUnsupported(t *testing.T) {
+	ds := &DataSource{
+		info: types.DatasourceInfo{Services: map[string]types.DatasourceService{
+			azureHealthModels: {URL: "https://data.cloudhealth.azure.com", HTTPClient: &http.Client{}},
+		}},
+		executors: map[string]azDatasourceExecutor{azureHealthModels: &healthmodels.Datasource{}},
+	}
+	ds.queryMux = ds.newQueryMux()
+	result, err := ds.QueryData(context.Background(), &backend.QueryDataRequest{
+		Queries: []backend.DataQuery{{RefID: "A", QueryType: azureHealthModels}},
+	})
+	require.NoError(t, err)
+	require.ErrorContains(t, result.Responses["A"].Error, "server-side queries")
+	require.Equal(t, backend.ErrorSourceDownstream, result.Responses["A"].ErrorSource)
 }

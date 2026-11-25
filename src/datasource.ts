@@ -7,6 +7,7 @@ import {
   type DataFrame,
   type DataQueryRequest,
   type DataQueryResponse,
+  type DataQueryError,
   type DataSourceInstanceSettings,
   LoadingState,
   type QueryFixAction,
@@ -150,13 +151,19 @@ export default class Datasource extends DataSourceWithBackend<AzureMonitorQuery,
       return forkJoin(observables).pipe(
         map((results: DataQueryResponse[]) => {
           const data: DataFrame[] = [];
+          const errors: DataQueryError[] = [];
           for (const result of results) {
             for (const frame of result.data) {
               data.push(frame);
             }
+            errors.push(...(result.errors ?? []));
           }
 
-          return { state: LoadingState.Done, data };
+          return {
+            state: errors.length ? LoadingState.Error : LoadingState.Done,
+            data,
+            ...(errors.length ? { errors } : {}),
+          };
         })
       );
     }

@@ -226,7 +226,6 @@ const EditorForQueryType = ({
     case AzureQueryType.AzureHealthModels:
       return (
         <HealthModelsQueryEditor
-          data={data}
           onQueryChange={onQueryChange}
           subscriptionId={subscriptionId}
           query={query}

@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { firstValueFrom, Subject } from 'rxjs';
 
 import { mockComboboxRect } from '@grafana/test-utils';
-import { dateTime, LoadingState, toDataFrame, type PanelData } from '@grafana/data';
 
 import { AzureHealthModelsQueryType, AzureQueryType } from '../../dataquery';
 import createMockDatasource from '../../mocks/datasource';
@@ -26,30 +25,6 @@ describe('HealthModelsQueryEditor', () => {
 
   const modelID = '/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.CloudHealth/healthmodels/model-a';
   const endpoint = 'https://model-a.data.cloudhealth.azure.com';
-  const model = { id: modelID, name: 'model-a', location: 'uksouth' };
-  const discoveryData = (custom = {}, refId = 'A'): PanelData => ({
-    state: LoadingState.Done,
-    timeRange: {
-      from: dateTime('2026-01-01T00:00:00Z'),
-      to: dateTime('2026-01-01T01:00:00Z'),
-      raw: { from: 'now-1h', to: 'now' },
-    },
-    series: [
-      toDataFrame({
-        refId,
-        fields: [],
-        meta: {
-          custom: {
-            healthModelResourceId: modelID,
-            dataplaneUrl: endpoint,
-            dataplaneModel: model,
-            ...custom,
-          },
-        },
-      }),
-    ],
-  });
-
   it.each(['literal', 'template'])('saves %s discovery without another query or repeated updates', async (mode) => {
     if (mode === 'template') {
       templateReplace = (value) => (value === '$sub' ? 'sub-a' : value === '$model' ? modelID : value);
@@ -57,6 +32,7 @@ describe('HealthModelsQueryEditor', () => {
     const datasource = createMockDatasource({
       getSubscriptions: jest.fn().mockResolvedValue([{ text: 'Subscription A', value: 'sub-a' }]),
       getHealthModels: jest.fn().mockResolvedValue([{ text: 'Model A', value: modelID }]),
+      azureHealthModelsDatasource: { getDataplaneUrl: jest.fn().mockResolvedValue(endpoint) },
     });
     const query = createMockQuery({
       queryType: AzureQueryType.AzureHealthModels,
@@ -68,22 +44,23 @@ describe('HealthModelsQueryEditor', () => {
     });
     const onChange = jest.fn();
     const onQueryChange = jest.fn();
-    const props = { datasource, onChange, onQueryChange, setError: jest.fn(), data: discoveryData() };
+    const props = { datasource, onChange, onQueryChange, setError: jest.fn() };
     const { rerender } = render(<HealthModelsQueryEditor {...props} query={query} />);
     await waitFor(() => expect(onQueryChange).toHaveBeenCalledTimes(1));
     const saved = onQueryChange.mock.calls[0][0];
     expect(saved.azureHealthModels).toEqual({
       ...query.azureHealthModels,
       dataplaneUrl: endpoint,
-      dataplaneModel: model,
     });
     rerender(<HealthModelsQueryEditor {...props} query={saved} />);
     expect(onQueryChange).toHaveBeenCalledTimes(1);
+    expect(datasource.azureHealthModelsDatasource.getDataplaneUrl).toHaveBeenCalledWith(modelID);
+    expect(datasource.azureHealthModelsDatasource.getDataplaneUrl).toHaveBeenCalledTimes(1);
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it.each(['other-model', 'other-query', 'loading', 'other-subscription'])(
-    'does not persist discovery from %s results',
+  it.each(['saved', 'other-subscription', 'missing-model'])(
+    'does not request endpoint discovery for %s queries',
     async (source) => {
       const datasource = createMockDatasource({
         getSubscriptions: jest.fn().mockResolvedValue([{ text: 'Subscription A', value: 'sub-a' }]),
@@ -93,17 +70,11 @@ describe('HealthModelsQueryEditor', () => {
         queryType: AzureQueryType.AzureHealthModels,
         subscription: source === 'other-subscription' ? 'sub-b' : 'sub-a',
         azureHealthModels: {
-          healthModelResourceId: modelID,
+          healthModelResourceId: source === 'missing-model' ? undefined : modelID,
           queryType: AzureHealthModelsQueryType.EntityHealthSnapshot,
+          dataplaneUrl: source === 'saved' ? endpoint : undefined,
         },
       });
-      const data = discoveryData(
-        source === 'other-model' ? { healthModelResourceId: modelID + '-other' } : {},
-        source === 'other-query' ? 'B' : 'A'
-      );
-      if (source === 'loading') {
-        data.state = LoadingState.Loading;
-      }
       const onQueryChange = jest.fn();
       render(
         <HealthModelsQueryEditor
@@ -112,21 +83,28 @@ describe('HealthModelsQueryEditor', () => {
           onChange={jest.fn()}
           onQueryChange={onQueryChange}
           setError={jest.fn()}
-          data={data}
         />
       );
       await waitFor(() => expect(datasource.getHealthModels).toHaveBeenCalled());
       expect(onQueryChange).not.toHaveBeenCalled();
+      expect(datasource.azureHealthModelsDatasource.getDataplaneUrl).not.toHaveBeenCalled();
     }
   );
 
   it.each(['model', 'subscription', 'datasource', 'variable'])(
     'ignores late discovery after changing the %s and accepts the current response',
     async (selection) => {
+      const oldResponse = new Subject<string>();
+      const currentResponse = new Subject<string>();
+      const getDataplaneUrl = jest
+        .fn()
+        .mockReturnValueOnce(firstValueFrom(oldResponse))
+        .mockReturnValue(firstValueFrom(currentResponse));
       const datasource = createMockDatasource({
         uid: 'source-a',
         getSubscriptions: jest.fn().mockResolvedValue([{ text: 'Subscription A', value: 'sub-a' }]),
         getHealthModels: jest.fn().mockResolvedValue([{ text: 'Model A', value: modelID }]),
+        azureHealthModelsDatasource: { getDataplaneUrl },
       });
       let resolvedModel = modelID;
       templateReplace = (value) => (value === '$model' ? resolvedModel : value);
@@ -139,25 +117,11 @@ describe('HealthModelsQueryEditor', () => {
           queryType: AzureHealthModelsQueryType.EntityHealthSnapshot,
         },
       });
-      const oldData = discoveryData();
-      oldData.request = {
-        requestId: 'old-discovery',
-        app: 'explore',
-        interval: '1m',
-        intervalMs: 60000,
-        range: oldData.timeRange,
-        scopedVars: {},
-        targets: [query],
-        timezone: 'utc',
-        startTime: 0,
-      };
       const onQueryChange = jest.fn();
       const onChange = jest.fn();
       const props = { datasource, onChange, onQueryChange, setError: jest.fn() };
-      const { rerender } = render(
-        <HealthModelsQueryEditor {...props} query={query} data={{ ...oldData, state: LoadingState.Loading }} />
-      );
-      await waitFor(() => expect(datasource.getHealthModels).toHaveBeenCalled());
+      const { rerender } = render(<HealthModelsQueryEditor {...props} query={query} />);
+      await waitFor(() => expect(getDataplaneUrl).toHaveBeenCalledWith(modelID));
 
       const nextModelID =
         selection === 'subscription'
@@ -172,6 +136,9 @@ describe('HealthModelsQueryEditor', () => {
               uid: 'source-b',
               getSubscriptions: jest.fn().mockResolvedValue([{ text: 'Subscription A', value: 'sub-a' }]),
               getHealthModels: jest.fn().mockResolvedValue([{ text: 'Model A', value: modelID }]),
+              azureHealthModelsDatasource: {
+                getDataplaneUrl: jest.fn().mockReturnValue(firstValueFrom(currentResponse)),
+              },
             })
           : datasource;
       const nextQuery = {
@@ -183,41 +150,64 @@ describe('HealthModelsQueryEditor', () => {
           healthModelResourceId: selection === 'variable' ? '$model' : nextModelID,
         },
       };
-      rerender(
-        <HealthModelsQueryEditor
-          {...props}
-          datasource={nextDatasource}
-          query={nextQuery}
-          data={{ ...oldData, state: LoadingState.Loading }}
-        />
+      rerender(<HealthModelsQueryEditor {...props} datasource={nextDatasource} query={nextQuery} />);
+      await waitFor(() =>
+        expect(nextDatasource.azureHealthModelsDatasource.getDataplaneUrl).toHaveBeenCalledWith(nextModelID)
       );
-      rerender(<HealthModelsQueryEditor {...props} datasource={nextDatasource} query={nextQuery} data={oldData} />);
-      await waitFor(() => expect(nextDatasource.getHealthModels).toHaveBeenCalled());
+      await act(async () => {
+        oldResponse.next(endpoint);
+      });
       expect(onQueryChange).not.toHaveBeenCalled();
 
-      const nextModel = { ...model, id: nextModelID, name: nextModelID.split('/').at(-1) };
       const nextEndpoint = 'https://current-model.data.cloudhealth.azure.com';
-      const currentData = discoveryData({
-        healthModelResourceId: nextModelID,
-        dataplaneUrl: nextEndpoint,
-        dataplaneModel: nextModel,
+      await act(async () => {
+        currentResponse.next(nextEndpoint);
       });
-      currentData.request = { ...oldData.request, requestId: 'current-discovery', targets: [nextQuery] };
-      rerender(<HealthModelsQueryEditor {...props} datasource={nextDatasource} query={nextQuery} data={currentData} />);
       await waitFor(() => expect(onQueryChange).toHaveBeenCalledTimes(1));
       expect(onQueryChange).toHaveBeenCalledWith({
         ...nextQuery,
         azureHealthModels: {
           ...nextQuery.azureHealthModels,
           dataplaneUrl: nextEndpoint,
-          dataplaneModel: nextModel,
         },
       });
       expect(onChange).not.toHaveBeenCalled();
     }
   );
 
-  it.each(['model', 'subscription'])('clears both cached fields when selecting another %s', async (selection) => {
+  it('reports endpoint discovery errors without changing the query', async () => {
+    const error = new Error('ARM endpoint discovery failed');
+    const datasource = createMockDatasource({
+      getSubscriptions: jest.fn().mockResolvedValue([{ text: 'Subscription A', value: 'sub-a' }]),
+      getHealthModels: jest.fn().mockResolvedValue([{ text: 'Model A', value: modelID }]),
+      azureHealthModelsDatasource: { getDataplaneUrl: jest.fn().mockRejectedValue(error) },
+    });
+    const query = createMockQuery({
+      queryType: AzureQueryType.AzureHealthModels,
+      subscription: 'sub-a',
+      azureHealthModels: {
+        healthModelResourceId: modelID,
+        queryType: AzureHealthModelsQueryType.EntityHealthSnapshot,
+      },
+    });
+    const onChange = jest.fn();
+    const onQueryChange = jest.fn();
+    const setError = jest.fn();
+    render(
+      <HealthModelsQueryEditor
+        query={query}
+        datasource={datasource}
+        onChange={onChange}
+        onQueryChange={onQueryChange}
+        setError={setError}
+      />
+    );
+    await waitFor(() => expect(setError).toHaveBeenCalledWith('health-models-endpoint', error));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onQueryChange).not.toHaveBeenCalled();
+  });
+
+  it.each(['model', 'subscription'])('clears the saved endpoint when selecting another %s', async (selection) => {
     const otherModelID = modelID + '-other';
     const datasource = createMockDatasource({
       getSubscriptions: jest.fn().mockResolvedValue([
@@ -236,7 +226,6 @@ describe('HealthModelsQueryEditor', () => {
         healthModelResourceId: modelID,
         queryType: AzureHealthModelsQueryType.EntityHealthSnapshot,
         dataplaneUrl: endpoint,
-        dataplaneModel: model,
       },
     });
     const onChange = jest.fn();
@@ -250,7 +239,6 @@ describe('HealthModelsQueryEditor', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalled());
     const updated = onChange.mock.calls.at(-1)?.[0];
     expect(updated.azureHealthModels.dataplaneUrl).toBeUndefined();
-    expect(updated.azureHealthModels.dataplaneModel).toBeUndefined();
     if (selection === 'model') {
       expect(updated.azureHealthModels.healthModelResourceId).toBe(otherModelID);
     } else {

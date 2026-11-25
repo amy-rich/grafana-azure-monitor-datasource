@@ -1,4 +1,4 @@
-import { dateTime } from '@grafana/data';
+import { dateTime, LoadingState } from '@grafana/data';
 import { firstValueFrom, of } from 'rxjs';
 
 import { AzureHealthModelsQueryType, AzureQueryType } from './dataquery';
@@ -30,7 +30,7 @@ jest.mock('@grafana/runtime', () => {
 describe('Azure Monitor Datasource', () => {
   describe('Health Models query routing', () => {
     it.each([AzureHealthModelsQueryType.EntityHealthSnapshot, AzureHealthModelsQueryType.EntityHealthHistory])(
-      'forwards %s to the backend datasource',
+      'forwards %s to the Health Models datasource',
       async (queryType) => {
         const ds = new Datasource(createMockInstanceSetttings());
         const query = createMockQuery({
@@ -41,7 +41,7 @@ describe('Azure Monitor Datasource', () => {
             queryType,
           },
         });
-        const backendQuery = jest.spyOn(ds.azureHealthModelsDatasource, 'query').mockReturnValue(of({ data: [] }));
+        const healthModelsQuery = jest.spyOn(ds.azureHealthModelsDatasource, 'query').mockReturnValue(of({ data: [] }));
         const from = dateTime('2026-01-01T00:00:00Z');
         const to = dateTime('2026-01-01T01:00:00Z');
         await firstValueFrom(
@@ -57,11 +57,41 @@ describe('Azure Monitor Datasource', () => {
             startTime: 0,
           })
         );
-        expect(backendQuery).toHaveBeenCalledWith(
+        expect(healthModelsQuery).toHaveBeenCalledWith(
           expect.objectContaining({ requestId: 'health-models-A', targets: [query] })
         );
       }
     );
+
+    it('keeps Health Models errors when merging with another Azure query type', async () => {
+      const ds = new Datasource(createMockInstanceSetttings());
+      const error = { refId: 'A', message: 'ARM denied' };
+      jest.spyOn(ds.azureHealthModelsDatasource, 'query').mockReturnValue(of({ data: [], errors: [error] }));
+      jest.spyOn(ds.azureMonitorDatasource, 'query').mockReturnValue(of({ data: [] }));
+      const from = dateTime('2026-01-01T00:00:00Z');
+      const to = dateTime('2026-01-01T01:00:00Z');
+      const result = await firstValueFrom(
+        ds.query({
+          requestId: 'mixed',
+          interval: '1m',
+          intervalMs: 60000,
+          range: { from, to, raw: { from, to } },
+          scopedVars: {},
+          targets: [
+            createMockQuery({
+              queryType: AzureQueryType.AzureHealthModels,
+              azureHealthModels: { healthModelResourceId: 'model' },
+            }),
+            createMockQuery({ refId: 'B' }),
+          ],
+          timezone: 'utc',
+          app: 'explore',
+          startTime: 0,
+        })
+      );
+      expect(result.errors).toEqual([error]);
+      expect(result.state).toBe(LoadingState.Error);
+    });
   });
 
   describe('interpolateVariablesInQueries()', () => {

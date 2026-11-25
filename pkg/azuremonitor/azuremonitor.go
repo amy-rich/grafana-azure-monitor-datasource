@@ -41,7 +41,7 @@ func NewDatasource(ctx context.Context, settings backend.DataSourceInstanceSetti
 		azureResourceGraph: &resourcegraph.AzureResourceGraphDatasource{Proxy: proxy, Logger: logger},
 		azureTraces:        &loganalytics.AzureLogAnalyticsDatasource{Proxy: proxy, Logger: logger},
 		traceExemplar:      &loganalytics.AzureLogAnalyticsDatasource{Proxy: proxy, Logger: logger},
-		azureHealthModels:  &healthmodels.Datasource{},
+		azureHealthModels:  &healthmodels.Datasource{Proxy: proxy},
 	}
 
 	instance, err := NewInstanceSettings(clientProvider, executors, logger)(ctx, settings)

@@ -4,15 +4,8 @@ import {
   type AzureQueryType,
 } from '../dataquery';
 
-export interface HealthModelMetadata {
-  id: string;
-  name: string;
-  location?: string;
-}
-
 export interface AzureHealthModelsQuery extends AzureHealthModelsQueryBase {
   dataplaneUrl?: string;
-  dataplaneModel?: HealthModelMetadata;
 }
 
 /**
