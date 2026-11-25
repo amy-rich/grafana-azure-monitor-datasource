@@ -1,12 +1,4 @@
-import {
-  type AzureHealthModelsQuery as AzureHealthModelsQueryBase,
-  type AzureMonitorQuery as AzureMonitorQueryBase,
-  type AzureQueryType,
-} from '../dataquery';
-
-export interface AzureHealthModelsQuery extends AzureHealthModelsQueryBase {
-  dataplaneUrl?: string;
-}
+import { type AzureMonitorQuery as AzureMonitorQueryBase, type AzureQueryType } from '../dataquery';
 
 /**
  * Represents the query as it moves through the frontend query editor and datasource files.
@@ -15,5 +7,4 @@ export interface AzureHealthModelsQuery extends AzureHealthModelsQueryBase {
 // TODO: This is a workaround until the type extensions issue is resolved in CUE
 export interface AzureMonitorQuery extends AzureMonitorQueryBase {
   queryType?: AzureQueryType;
-  azureHealthModels?: AzureHealthModelsQuery;
 }
