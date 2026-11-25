@@ -27,7 +27,7 @@ interface HealthModelResource {
 
 interface HealthModel extends HealthModelResource {
   location?: string;
-  properties: { dataPlaneUri: string };
+  properties?: { dataPlaneUri?: string };
 }
 
 interface Entity extends HealthModelResource {
@@ -152,13 +152,9 @@ export default class AzureHealthModelsDatasource extends DataSourceWithBackend<
       if (model?.id?.toLowerCase() !== modelID.toLowerCase() || !model.name) {
         throw new Error('Health Model metadata is missing its expected id or name');
       }
-      const endpoint = model.properties?.dataPlaneUri;
+      const endpoint = query.azureHealthModels?.dataplaneUrl || model.properties?.dataPlaneUri;
       if (typeof endpoint !== 'string' || !endpoint) {
         throw new Error('The Health Model metadata does not contain properties.dataPlaneUri');
-      }
-      const savedEndpoint = query.azureHealthModels?.dataplaneUrl;
-      if (savedEndpoint && savedEndpoint.replace(/\/+$/, '') !== endpoint.replace(/\/+$/, '')) {
-        throw new Error('The saved dataplaneUrl does not match the selected Health Model; select the model again');
       }
       const entities = await this.getArmPages<Entity>(`${modelID}/entities?${armParams}`, signal);
       const seen = new Set<string>();

@@ -284,7 +284,32 @@ describe('AzureHealthModelsDatasource', () => {
       ]);
     });
 
-    it.each(['missing endpoint', 'wrong model', 'ARM denied', 'stale endpoint'])(
+    it.each([AzureHealthModelsQueryType.EntityHealthSnapshot, AzureHealthModelsQueryType.EntityHealthHistory])(
+      'uses the saved URL for %s without rediscovering or comparing endpoints',
+      async (queryType) => {
+        const { datasource, getResource } = setup();
+        const savedEndpoint = 'https://saved-model.data.cloudhealth.azure.com';
+        const query = cachedQuery();
+        query.azureHealthModels = { ...query.azureHealthModels, queryType, dataplaneUrl: savedEndpoint };
+        const discover = jest.spyOn(datasource, 'getDataplaneUrl');
+
+        for (const properties of [{ dataPlaneUri: endpoint }, { dataPlaneUri: '' }, undefined]) {
+          getResource.mockResolvedValueOnce({ ...model, properties });
+          const result = await firstValueFrom(datasource.query(request([query])));
+          expect(result.errors).toBeUndefined();
+          expect(result.data).toHaveLength(4);
+          const lastCall = getResource.mock.calls.at(-1);
+          expect(lastCall?.[0]).toBe('healthmodels');
+          expect(lastCall?.[1]?.dataplaneUrl).toBe(savedEndpoint);
+        }
+
+        expect(discover).not.toHaveBeenCalled();
+        expect(getResource.mock.calls.filter(([path]) => path.startsWith(`azuremonitor${modelID}?`))).toHaveLength(3);
+        expect(getResource.mock.calls.filter(([path]) => path === 'healthmodels')).toHaveLength(3);
+      }
+    );
+
+    it.each(['missing endpoint', 'wrong model', 'ARM denied'])(
       'reports %s without requesting health data',
       async (failure) => {
         const { datasource, getResource } = setup();
@@ -296,11 +321,8 @@ describe('AzureHealthModelsDatasource', () => {
           getResource.mockResolvedValueOnce({ ...model, id: `${modelID}-other` });
         }
         const query = cachedQuery();
-        if (failure === 'stale endpoint') {
-          query.azureHealthModels = {
-            ...query.azureHealthModels,
-            dataplaneUrl: 'https://other.data.cloudhealth.azure.com',
-          };
+        if (failure === 'missing endpoint') {
+          query.azureHealthModels = { ...query.azureHealthModels, dataplaneUrl: undefined };
         }
         const result = await firstValueFrom(datasource.query(request([query])));
         expect(result.state).toBe(LoadingState.Error);
