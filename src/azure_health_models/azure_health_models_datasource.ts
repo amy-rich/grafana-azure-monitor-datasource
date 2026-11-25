@@ -373,7 +373,7 @@ export default class AzureHealthModelsDatasource extends DataSourceWithBackend<
   }
 
   async getDataplaneUrl(modelResourceId: string): Promise<string> {
-    const model = await this.getResource<{ properties?: { dataPlaneUri?: string } }>(
+    const model = await this.getResource<HealthModel>(
       `${this.resourcePath}${modelResourceId}?api-version=${HEALTH_MODELS_DISCOVERY_API_VERSION}`
     );
     if (typeof model.properties?.dataPlaneUri !== 'string' || !model.properties.dataPlaneUri) {
